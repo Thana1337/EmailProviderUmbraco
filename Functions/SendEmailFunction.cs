@@ -27,18 +27,17 @@ namespace EmailProvider.Functions
         {
             _logger.LogInformation("Processing request to send email.");
 
-            // Read the request body and deserialize it into an EmailDto object
+
             string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
             var emailData = JsonConvert.DeserializeObject<EmailDto>(requestBody);
 
-            // Validate the incoming data: Check only required fields (like Email)
+
             if (emailData == null || string.IsNullOrEmpty(emailData.Email))
             {
                 _logger.LogWarning("Invalid request: Missing required email field.");
                 return new BadRequestObjectResult("Please provide a valid email address.");
             }
 
-            // Optional fields can be null or empty and should be handled accordingly.
             var emailRequest = new EmailRequest()
             {
                 To = emailData.Email,
@@ -62,7 +61,6 @@ namespace EmailProvider.Functions
         Onatrix"
             };
 
-            // Send the email
             bool emailSent = await SendEmailAsync(emailRequest);
 
             if (emailSent)
@@ -80,7 +78,6 @@ namespace EmailProvider.Functions
         {
             try
             {
-                // Build the email message
                 var emailMessage = new EmailMessage(
                     senderAddress: Environment.GetEnvironmentVariable("SenderAddress"),
                     content: new EmailContent(emailRequest.Subject)
@@ -90,11 +87,10 @@ namespace EmailProvider.Functions
                     },
                     recipients: new EmailRecipients(new List<EmailAddress>
                     {
-                new EmailAddress(emailRequest.To) // Recipient email address
+                new EmailAddress(emailRequest.To)
                     })
                 );
 
-                // Send the email
                 var result = await _emailClient.SendAsync(WaitUntil.Completed, emailMessage);
 
                 if (result.HasCompleted)

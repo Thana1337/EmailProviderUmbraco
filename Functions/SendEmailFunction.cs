@@ -1,5 +1,6 @@
 using Azure;
 using Azure.Communication.Email;
+using EmailProvider.Dtos;
 using EmailProvider.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -7,7 +8,6 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using System.Diagnostics;
-using System.Net.Mail;
 
 namespace EmailProvider.Functions
 {
@@ -27,64 +27,88 @@ namespace EmailProvider.Functions
         {
             _logger.LogInformation("Processing request to send email.");
 
+            // Read the request body and deserialize it into an EmailDto object
             string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
-            dynamic data = JsonConvert.DeserializeObject(requestBody)!;
-            string email = data?.email;
+            var emailData = JsonConvert.DeserializeObject<EmailDto>(requestBody);
 
-            if (!string.IsNullOrEmpty(email))
+            // Validate the incoming data: Check only required fields (like Email)
+            if (emailData == null || string.IsNullOrEmpty(emailData.Email))
             {
-                var emailRequest = new EmailRequest()
-                {
-                    To = email,
-                    Subject = "Confirmation",
-                    HtmlBody = @"
-                        <html>
-                            <body>
-                                <h1>Thank you for contacting Onatrix!</h1>
-                                <p>We have received your request and will contact you shortly.</p>
-                                <p>Best regards,<br>Onatrix</p>
-                            </body>
-                        </html>",
-                    PlainText = "Thank you for contacting us."
-                };
-
-                bool emailSent = await SendEmailAsync(emailRequest);
-
-                if (emailSent)
-                {
-                    return new OkObjectResult($"Email sent to {email}");
-                }
-                else
-                {
-                    return new BadRequestObjectResult("Email could not be sent.");
-                }
+                _logger.LogWarning("Invalid request: Missing required email field.");
+                return new BadRequestObjectResult("Please provide a valid email address.");
             }
 
-            return new BadRequestObjectResult("Please pass a valid email.");
+            // Optional fields can be null or empty and should be handled accordingly.
+            var emailRequest = new EmailRequest()
+            {
+                To = emailData.Email,
+                Subject = "Confirmation",
+                HtmlBody = $@"
+                <html>
+                    <body>
+                        <h1>Thank you for contacting Onatrix!</h1>
+                        <p>We will contact you back at {emailData.Email} {(string.IsNullOrEmpty(emailData.Phone) ? "" : $"or {emailData.Phone}")}.</p>
+                        <p>{(!string.IsNullOrEmpty(emailData.Message) ? $"You mentioned: \"{emailData.Message}\"" : "")}</p>
+                        <p>{(!string.IsNullOrEmpty(emailData.Service) ? $"We will assist you with: \"{emailData.Service}\"" : "")}</p>
+                        <p>Best regards,<br>Onatrix</p>
+                    </body>
+                </html>",
+                PlainText = $@"
+        Thank you for contacting Onatrix!
+        We will contact you back at {emailData.Email} {(string.IsNullOrEmpty(emailData.Phone) ? "" : $"or {emailData.Phone}")}.
+        {(!string.IsNullOrEmpty(emailData.Message) ? $"You mentioned: \"{emailData.Message}\"" : "")}
+        {(!string.IsNullOrEmpty(emailData.Service) ? $"We will assist you with: \"{emailData.Service}\"" : "")}
+        Best regards,
+        Onatrix"
+            };
+
+            // Send the email
+            bool emailSent = await SendEmailAsync(emailRequest);
+
+            if (emailSent)
+            {
+                return new OkObjectResult($"Email sent to {emailData.Email}");
+            }
+            else
+            {
+                return new BadRequestObjectResult("Email could not be sent.");
+            }
         }
+
 
         public async Task<bool> SendEmailAsync(EmailRequest emailRequest)
         {
             try
             {
-                var result = await _emailClient.SendAsync(
-                    WaitUntil.Completed,
-
+                // Build the email message
+                var emailMessage = new EmailMessage(
                     senderAddress: Environment.GetEnvironmentVariable("SenderAddress"),
-                    recipientAddress: emailRequest.To,
-                    subject: emailRequest.Subject,
-                    htmlContent: emailRequest.HtmlBody,
-                    plainTextContent: emailRequest.PlainText);
+                    content: new EmailContent(emailRequest.Subject)
+                    {
+                        Html = emailRequest.HtmlBody,
+                        PlainText = emailRequest.PlainText
+                    },
+                    recipients: new EmailRecipients(new List<EmailAddress>
+                    {
+                new EmailAddress(emailRequest.To) // Recipient email address
+                    })
+                );
+
+                // Send the email
+                var result = await _emailClient.SendAsync(WaitUntil.Completed, emailMessage);
 
                 if (result.HasCompleted)
+                {
                     return true;
+                }
             }
             catch (Exception ex)
             {
-                Debug.WriteLine(ex);
+                _logger.LogError($"Error sending email: {ex.Message}");
             }
 
             return false;
         }
+
     }
 }
